@@ -1,0 +1,7 @@
+# Secrets: .env is untracked; never commit credentials
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

@@ -14,7 +14,7 @@ All six course modes return honest `not_implemented` placeholders. No retrieval,
 ## Prerequisites
 
 - Python 3.12 and UV installed.
-- Existing work is preserved. Supplied `data/raw/` files (including `data/raw/PROVENANCE.md`) must not be altered. At the time this story was written the repository contained only `README.md`, an empty `docs/`, and no `docs/config.yaml`, `docs/architecture.md`, `data/` or other stories. Re-check before starting.
+- Existing work is preserved. Supplied `data/raw/` files (including `data/raw/PROVENANCE.md`) must not be altered. At the time this story was written the repository contained `README.md`, `CLAUDE.md`, supplied `data/raw/` files (`BNS_2023_bare_act.pdf`, `IPC_1860_bare_act.pdf`, `PROVENANCE.md`), an existing `docs/architecture.md`, and no `docs/config.yaml` or other stories. Re-check before starting, and extend the existing `docs/architecture.md` rather than overwrite it.
 - Project path: read `docs/config.yaml` if it exists and use the configured project path. Otherwise use the repository root.
 - The trainer's Open WebUI ZIP has been shared over the LAN. Participants extract it and run its setup script **exactly once** (see Phase 2, step 9).
 - Later-story needs, noted now so nobody is surprised (nothing here uses them):
@@ -124,10 +124,8 @@ Also confirm: `.env` is not tracked, `data/raw/` is unchanged, and no secrets ap
 
 ## Handover
 
-Fill in when the story is done:
-
-- **Architecture approval:** who approved `docs/architecture.md` and when.
-- **Files created:** list every file created or changed.
-- **Commands actually run:** list the real commands and their outcomes (do not list commands that were not run).
-- **Open WebUI result:** what the smoke check showed.
+- **Architecture approval:** approved prior to this session (Phase 2 seed work was already in progress); `docs/architecture.md` reflects Phase 1 content.
+- **Files created:** `pyproject.toml`, `.env.example`, `.gitignore`, `src/building_with_rag/{__init__.py,settings.py,registry.py,models.py,patterns.py,main.py}`, `tests/test_smoke.py` (all pre-existing from the prior session; verified against the story spec this session, no changes needed).
+- **Commands actually run:** `uv python install 3.12`; `uv sync`; `uv run ruff check .` (all checks passed); `uv run pytest -q` (5 passed); manual `uvicorn` run with no `.env` credentials set, verified via `curl`: `GET /healthz`, `GET /v1/models`, `POST /v1/query` (semantic, `not_implemented`), `POST /v1/chat/completions` streaming (role/content/stop + `[DONE]`).
+- **Open WebUI result:** not run this session (requires the trainer's LAN-shared ZIP and manual setup script execution) — pending.
 - **Notes for later stories:** contracts are extended additively; Story 2.2 embedding takes about 40 minutes on a free Voyage key; Story 3.1 needs `GENERATION_API_BASE_URL` and `GENERATION_API_KEY` in `.env`; later stories render confidence, sources and low-confidence warnings as clearly labelled text after the answer, keeping the full `GenerationResult` in `QueryResult.generation`.
