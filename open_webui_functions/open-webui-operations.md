@@ -7,7 +7,7 @@
 700 MB into `~/open-webui-bundle`) and shares that folder on the LAN. Each
 participant copies the folder to their PC and double-clicks
 `setup_open_webui.cmd` inside it. Afterwards use
-`manage_open_webui.cmd start|stop|restart|status` from the same folder.
+`manage_open_webui.cmd start|stop|status` from the same folder.
 
 **Windows, own internet:** double-click `open_webui_functions/setup_open_webui.cmd`.
 
@@ -29,14 +29,8 @@ sh open_webui_functions/manage_open_webui.sh restart
 ```
 
 The script records only the process it starts in `$HOME/open-webui/server.pid`.
-It automatically removes a stale PID file (for example, after an unclean
-shutdown), but never kills a live unverified PID or a different process that
-happens to use port 8080. Its log is `$HOME/open-webui/server.log`.
-
-These scripts do not install a login item, LaunchAgent, service, scheduled
-task, or any other boot-time startup mechanism. Open WebUI remains stopped
-after a machine restart until you explicitly run `start` (or run setup, which
-starts it once as part of setup).
+It refuses to kill an unverified PID or a different process that happens to use
+port 8080. Its log is `$HOME/open-webui/server.log`.
 
 To use another isolated installation, set `WEBUI_HOME` for one command:
 

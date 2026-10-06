@@ -1,20 +1,22 @@
 [project]
 name = "building-with-rag"
 version = "0.1.0"
-description = "Building with RAG classroom capstone (BNS/IPC)"
-requires-python = ">=3.12,<3.13"
+description = "Building Intelligence with RAG — capstone RAG API"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "pydantic-settings>=2.4",
-    "pymongo>=4.8",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "uvicorn>=0.30",
+    "pymongo>=4.7",
+    "pymupdf>=1.28.2",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=8.2",
+    "ruff>=0.5",
     "httpx>=0.27",
-    "ruff>=0.6",
 ]
 
 [build-system]
@@ -27,7 +29,6 @@ packages = ["src/building_with_rag"]
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
-extend-exclude = ["raw", "data"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

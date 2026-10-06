@@ -5,7 +5,6 @@ $ErrorActionPreference = 'Stop'
 
 $WebuiHome = if ($env:WEBUI_HOME) { $env:WEBUI_HOME } else { Join-Path $HOME 'open-webui' }
 $Exe = Join-Path $WebuiHome '.venv\Scripts\open-webui.exe'
-$Python = Join-Path $WebuiHome '.venv\Scripts\python.exe'
 $PidFile = Join-Path $WebuiHome 'server.pid'
 $LogFile = Join-Path $WebuiHome 'server.log'
 $ErrFile = Join-Path $WebuiHome 'server.err.log'
@@ -21,32 +20,14 @@ function Get-OwnedProcess {
     $id = (Get-Content $PidFile -Raw).Trim()
     if ($id -notmatch '^\d+$') { return $null }
     $proc = Get-Process -Id ([int]$id) -ErrorAction SilentlyContinue
-    if (-not $proc) { return $null }
-    # The console-script launcher can hand work to python.exe. Check the
-    # command line as well as the executable so the PID remains verifiable.
-    $commandLine = (Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue).CommandLine
-    if (($proc.Path -ieq $Exe) -or ($proc.Path -ieq $Python -and $commandLine -match '(?i)open[_-]webui')) { return $proc }
+    if ($proc -and $proc.Path -ieq $Exe) { return $proc }
     return $null
-}
-
-function Remove-StalePidFile {
-    if (-not (Test-Path $PidFile)) { return $false }
-    $id = (Get-Content $PidFile -Raw).Trim()
-    $proc = if ($id -match '^\d+$') { Get-Process -Id ([int]$id) -ErrorAction SilentlyContinue } else { $null }
-    if (-not $proc) {
-        Remove-Item $PidFile -Force
-        Write-Host "Removed stale PID file: $PidFile"
-        return $true
-    }
-    return $false
 }
 
 function Start-WebUI {
     if (Test-Healthy) { Write-Host 'Open WebUI is already healthy at http://127.0.0.1:8080.'; return }
-    if (-not (Test-Path $Python)) { throw "Open WebUI is not installed: $Python. Run setup_open_webui.cmd first." }
-    $owned = Get-OwnedProcess
-    if ($owned) { throw "Open WebUI process $($owned.Id) is still running but is not healthy; run '$PSCommandPath restart' or inspect $ErrFile." }
-    if ((Test-Path $PidFile) -and -not (Remove-StalePidFile)) { throw "Refusing to replace a PID file for a live, unverified process: $PidFile" }
+    if (-not (Test-Path $Exe)) { throw "Open WebUI is not installed: $Exe. Run setup_open_webui.cmd first." }
+    if ((Test-Path $PidFile) -and -not (Get-OwnedProcess)) { Remove-Item $PidFile }
 
     # Load settings.env into this process; the server inherits it.
     foreach ($line in Get-Content (Join-Path $WebuiHome 'settings.env')) {
@@ -57,8 +38,7 @@ function Start-WebUI {
     $env:DATA_DIR = Join-Path $WebuiHome 'data'
     $env:PYTHONUTF8 = '1'
 
-    # Invoke Python directly so the recorded PID is the long-lived server.
-    $proc = Start-Process -FilePath $Python -ArgumentList '-m', 'open_webui', 'serve', '--host', '127.0.0.1', '--port', '8080' `
+    $proc = Start-Process -FilePath $Exe -ArgumentList 'serve', '--host', '127.0.0.1', '--port', '8080' `
         -WorkingDirectory $WebuiHome -WindowStyle Hidden -PassThru `
         -RedirectStandardOutput $LogFile -RedirectStandardError $ErrFile
     Set-Content -Path $PidFile -Value $proc.Id
@@ -72,16 +52,9 @@ function Start-WebUI {
 
 function Stop-WebUI {
     $proc = Get-OwnedProcess
-    if (-not $proc) {
-        if (Test-Path $PidFile) {
-            if (-not (Remove-StalePidFile)) { throw "Refusing to stop the live process recorded in an unverified PID file: $PidFile" }
-        }
-        Write-Host 'No Open WebUI process started by this script was found. Nothing stopped.'
-        return
-    }
-    # /T ensures no child process from this server is left behind.
+    if (-not $proc) { Write-Host 'No Open WebUI process started by this script was found. Nothing stopped.'; return }
+    # /T also stops the Python server the launcher spawned.
     & taskkill.exe /PID $proc.Id /T /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Open WebUI PID $($proc.Id) could not be stopped." }
     Remove-Item $PidFile -ErrorAction SilentlyContinue
     Write-Host 'Open WebUI stopped.'
 }

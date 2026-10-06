@@ -14,37 +14,17 @@ is_healthy() {
     curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1
 }
 
-pid_from_file() {
+owned_pid() {
     [ -f "$PID_FILE" ] || return 1
     pid=$(tr -d '[:space:]' < "$PID_FILE")
     case "$pid" in
         ''|*[!0-9]*) return 1 ;;
     esac
-    printf '%s\n' "$pid"
-}
-
-owned_pid() {
-    pid=$(pid_from_file) || return 1
     command=$(ps -p "$pid" -o command= 2>/dev/null || true)
     case "$command" in
-        # The console-script wrapper may exec Python, so accept either the
-        # wrapper or Python as long as it is from this installation.
-        *"$WEBUI_HOME/.venv/"*open-webui*|*"$WEBUI_HOME/.venv/"*open_webui*)
-            printf '%s\n' "$pid"
-            ;;
+        *"$WEBUI_HOME/.venv/bin/open-webui"*) printf '%s\n' "$pid" ;;
         *) return 1 ;;
     esac
-}
-
-discard_stale_pid_file() {
-    [ -f "$PID_FILE" ] || return 0
-    pid=$(pid_from_file 2>/dev/null || true)
-    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-        rm -f "$PID_FILE"
-        echo "Removed stale PID file: $PID_FILE"
-        return 0
-    fi
-    return 1
 }
 
 start() {
@@ -56,13 +36,9 @@ start() {
         echo "Open WebUI launcher not found or not executable: $LAUNCHER" >&2
         exit 1
     fi
-    if pid=$(owned_pid); then
-        echo "Open WebUI process $pid is still running but is not healthy; run '$0 restart' or inspect $LOG_FILE." >&2
-        exit 1
-    fi
-    if [ -f "$PID_FILE" ] && ! discard_stale_pid_file; then
-        echo "Refusing to replace a PID file for a live, unverified process: $PID_FILE" >&2
-        echo "It will not be stopped or overwritten by this script." >&2
+    if [ -f "$PID_FILE" ] && ! owned_pid >/dev/null; then
+        echo "Refusing to replace an unverified PID file: $PID_FILE" >&2
+        echo "Remove it only after checking that it is stale." >&2
         exit 1
     fi
     nohup "$LAUNCHER" >>"$LOG_FILE" 2>&1 &
@@ -83,14 +59,6 @@ start() {
 
 stop() {
     if ! pid=$(owned_pid); then
-        if [ -f "$PID_FILE" ]; then
-            if discard_stale_pid_file; then
-                echo "No Open WebUI process started by this script was found. Nothing stopped."
-                return 0
-            fi
-            echo "Refusing to stop the live process recorded in an unverified PID file: $PID_FILE" >&2
-            exit 1
-        fi
         echo "No Open WebUI process started by this script was found. Nothing stopped."
         return 0
     fi

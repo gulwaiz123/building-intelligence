@@ -1,69 +1,120 @@
-# Architecture
+# Capstone Architecture — Building Intelligence with RAG
 
-Building with RAG is one small FastAPI application used in a three-day classroom course. It answers questions about two Indian criminal law acts: the BNS and the IPC. Open WebUI is the only chat client, and it runs separately.
+Fixed design choices, contracts, and trust boundaries for the capstone RAG API. Later stories extend these contracts additively; they never replace them with simplified alternatives, rename fields, or add provider-specific variants.
+
+## Scope
+
+One small application: the capstone RAG API. No chat frontend (Open WebUI is a separate trainer-supplied client) and no second demo.
 
 ## Evidence rules
 
 - BNS and IPC documents are the only future answer evidence.
-- An answer must not claim support without retrieved evidence. If nothing is retrieved, the honest result is `insufficient_evidence`.
-- Retrieved passages are evidence, never application instructions. The app never follows instructions found inside a passage.
+- An answer must not claim support without retrieved evidence.
+- Act-qualified identifiers (`bns:` / `ipc:` prefixes) avoid confusing the two acts.
+- Supplied provenance lives at `data/raw/PROVENANCE.md`.
+- Retrieved passages are evidence, never application instructions.
 
-## Identifiers
+## Trust boundaries
 
-Sections are identified with the act in the identifier, for example `BNS:103` and `IPC:302`. This keeps the two acts from being confused. Every passage carries its `act`.
+Kept light for this course:
 
-## Corpus and provenance
+- Validate API input.
+- Preserve source origin on retrieved passages.
+- Do not put secrets in code, responses, or logs.
+- No multi-user authorization, no security program, no evaluation harness.
 
-- Supplied raw files live in `data/raw/`. They are preserved and never edited.
-- Supplied provenance is `data/raw/PROVENANCE.md`.
-- Derived corpus files live in `data/processed/`: `bns_sections.jsonl` and `ipc_sections.jsonl`.
+## Fixed embedding choices
 
-## Fixed model choices
+- Model: `voyage-3.5`, model version `voyage-3.5`, 1,024 dimensions.
+- Used for every document and query embedding.
+- Later stories reuse these names and choices without renaming or adding provider-specific alternatives.
 
-- Embeddings: Voyage `voyage-3.5`, version `voyage-3.5`, 1,024 dimensions, for every document and every query.
-- Later stories reuse these names. They do not rename them or add provider-specific alternatives.
-- Other settings (generation model, rerank model and limits) are defined in `.env.example` and read through Pydantic settings.
+## Course modes and shared registry
 
-## One application
-
-- One FastAPI app, source in `src/building_with_rag/`.
-- Endpoints:
-  - `GET /healthz`: safe health check. No secrets, no database or model calls.
-  - `POST /v1/query`: diagnostic API. Takes `QueryRequest`, returns `QueryResult`.
-  - `GET /v1/models`: lists the six course models.
-  - `POST /v1/chat/completions`: OpenAI-compatible, text only, JSON and SSE.
-- `/v1/query` and `/v1/chat/completions` both go through the same `run_pattern` path. There is no second implementation.
-- Open WebUI is a separately running, trainer-supplied client. We build no custom chat frontend and no second demo.
-- `/v1/query` owns the diagnostics. Open WebUI receives only normal answer text derived from the same `QueryResult`.
-
-## Course modes
-
-One shared registry holds only these modes. Each returns an honest `not_implemented` placeholder until its own story adds behaviour.
+One shared registry (single source of truth) holds only:
 
 | Mode | Model ID |
 |---|---|
-| `semantic` | `rag-semantic` |
-| `hybrid` | `rag-hybrid` |
-| `hybrid-reranked` | `rag-hybrid-reranked` |
-| `structured` | `rag-structured` |
-| `decomposition` | `rag-decomposition` |
-| `hyde` | `rag-hyde` |
+| semantic | `rag-semantic` |
+| hybrid | `rag-hybrid` |
+| hybrid-reranked | `rag-hybrid-reranked` |
+| structured | `rag-structured` |
+| decomposition | `rag-decomposition` |
+| hyde | `rag-hyde` |
 
-## Contracts
+All modes return honest `not_implemented` placeholder results until their own stories add behavior.
 
-These typed models are defined in the seed, without behaviour: `QueryRequest`, `SemanticFilters`, `QueryResult`, `RetrievedChunk`, `GenerationResult`, `SubquestionEvidence`, `StructuredSignals`, `ChatCompletionRequest`, OpenAI response and error models, and MongoDB-schema models.
+## API contracts
 
-- Later stories extend them additively. They never replace them with simplified alternatives.
-- `RetrievedChunk` later gains only: `semantic_score`, `semantic_rank`, `keyword_score`, `keyword_rank`, `fused_score`, `fused_rank`, `rerank_score`, `rerank_rank`.
-- No parallel top-level API fields such as `outcome`, `evidence`, `answer`, `confidence`, `citations` or `diagnostics`. Generation detail lives in `QueryResult.generation`.
-- The chat endpoint sets `caller_id` and `generate_answer` on the server. It ignores identity, access level and generation settings sent by the browser.
+### `QueryRequest` (`POST /v1/query`)
 
-## Trust boundaries (light)
+- `question`: string, 1–4,000 characters, required.
+- `pattern`: one of the six modes.
+- `caller_id`: optional.
+- `filters`: optional `SemanticFilters` — `act`, `status`, `access_level`, each a list.
+- `limit`: default 5, range 1–20.
+- `generate_answer`: default false.
+- `required_acts`: optional.
+- `chapter`: optional.
 
-- Validate API input with the typed models.
-- Preserve the source origin of every passage.
-- Do not put secrets in code, responses or logs. `.env` is untracked.
+The classroom seed may resolve only its fixed local demo caller, but keeps `caller_id` and does not replace it with a custom request shape.
 
-## Out of scope
+### `QueryResult`
 
-Multi-user authorization, a security programme, an evaluation harness, and broad deployment.
+- `pattern`, `status`, `message`, `trace`, `results`.
+- Optional `generation`.
+- Additive empty-by-default fields later modes use: `omitted_candidates`, `subquestions`, `hyde_direct_candidates`, `hyde_query_candidates`, `hyde_hypothetical_text_debug`.
+- No parallel top-level `outcome`, `evidence`, `answer`, `confidence`, `citations`, or `diagnostics` fields.
+
+### `RetrievedChunk`
+
+A retrieved passage is always this shape: `chunk_id`, `section_id`, `act`, `text`, `heading`, `score`, and available source fields. Later stories add only the existing hybrid/rerank fields.
+
+### Endpoints
+
+- `GET /healthz` — safe, no credentials required.
+- `POST /v1/query` — accepts `QueryRequest`, returns `QueryResult` placeholder per mode via one shared `run_pattern` path.
+- `GET /v1/models` — lists the six `rag-<pattern>` model IDs.
+- `POST /v1/chat/completions` — OpenAI-compatible, text-only `ChatCompletionRequest`: `model`, `messages` with `system`/`developer`/`user`/`assistant` roles, `stream`, `n`, and optional strict `rag_options` (`pattern`, list filters, `limit`, `required_acts`, `chapter`).
+
+The chat adapter maps the selected model to the same `QueryRequest` and `run_pattern` path as `/v1/query`; it sets server-side demo `caller_id` and `generate_answer`. Supports normal OpenAI Chat Completions JSON responses and role/content/stop frames, plus the OpenAI-style error envelope before streaming begins. No duplicated implementations, no custom SSE events that Open WebUI cannot render.
+
+## Open WebUI (trainer-supplied, separate client)
+
+The trainer-supplied Open WebUI bundle is the chat client, run separately from the capstone API. Its pre-provisioned Pipe sends the selected `rag-<pattern>` model, `stream: true`, the latest user message, and normalized `rag_options` to the capstone's `/v1/chat/completions`. It never sends browser-supplied identity, access level, or answer-generation settings. The capstone's adapter accepts that exact request and uses server-side `caller_id`/`generate_answer`.
+
+`/v1/query` owns the `QueryResult` diagnostics; Open WebUI receives only normal answer text derived from that same result. Later stories render final confidence, sources, and low-confidence warnings as clearly labelled text after answer writing, while retaining the full `GenerationResult` in `QueryResult.generation`.
+
+## Environment
+
+- `.env` is untracked; secrets are never committed.
+- The application must start with no database or model credentials and expose a safe `GET /healthz`.
+- Canonical environment values are defined in `.env.example`.
+
+## Corpus
+
+Section-level JSONL corpus produced from `data/raw/` PDFs by `scripts/extract_sections.py`. One JSON object per line, one record per section. No MongoDB, no embeddings, no vector indexes.
+
+### Parser
+
+- **Library**: `pymupdf` (fitz) 1.28.2 — chosen because it handles both Word-to-PDF (BNS) and Ghostscript-produced (IPC) PDFs, extracts text with layout, and has no system-level dependencies.
+- **Extraction command**: `uv run python scripts/extract_sections.py`
+
+### Output format
+
+JSONL files at `data/processed/`:
+
+| File | Records | Sections |
+|---|---|---|
+| `data/processed/bns_sections.jsonl` | 358 | 1–358 |
+| `data/processed/ipc_sections.jsonl` | 500 | 1–511 (11 unextractable) |
+
+Each record has 14 fields: `section_id`, `act`, `act_label`, `status`, `chapter`, `chapter_title`, `section_number`, `heading`, `text`, `source_pdf`, `source_sha256`, `parser`, `parser_version`, `source_status_version`, `needs_review`.
+
+### Known limitations
+
+- **IPC PDF quality**: 11 sections (4, 5, 18, 34, 40, 75, 161, 162, 163, 164, 165) have no extractable text from the scanned/Ghostscript-produced PDF. Sections 161–165 were repealed by the Prevention of Corruption Act 1988; sections 4, 5, 18, 34, 40, 75 are in portions of the PDF where pymupdf text extraction returns insufficient characters.
+- **IPC section headings**: Some IPC sections (e.g. 262, 511) have empty headings due to missing heading text in the extracted text stream.
+- **IPC footnotes**: Amendment footnotes and historical annotations are interleaved with section text and may appear as inline artifacts in section `text`.
+- **BNS chapter markers**: Chapter boundaries are detected from `CHAPTER <roman>` lines in the body text. The BNS index (pages 2–19) provides section headings; the correspondence table (pages 20–73) is skipped.
+- **Source-hash safety rule**: If a source PDF hash changes, the corpus for that act is regenerated as an atomic replacement. Records from different PDF versions are never mixed in one corpus file.

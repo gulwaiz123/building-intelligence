@@ -1,7 +1,0 @@
-- download the open-webui-bundle.zip 
-- Unzip in your home folder
--Download open_webui_functions — with all the scripts.
-- Run setup_open_webui.cmd / ps1 file and it will install open web ui
-- Run manage_open_webui.cmd / ps1 - start / stop / restart
-
-

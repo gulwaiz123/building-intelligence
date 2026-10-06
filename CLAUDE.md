@@ -25,4 +25,3 @@ This is a shared training capstone; token waste multiplies across 20+ users.
 - Never pretty-print full retrieval responses. Do not use `curl ... | python3 -m json.tool`.
 - Use raw `curl -s` or focused `jq` fields that exclude/truncate passage `text`.
 - After writing a file, report its path; do not echo its contents.
-
