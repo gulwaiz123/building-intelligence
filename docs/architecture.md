@@ -118,3 +118,32 @@ Each record has 14 fields: `section_id`, `act`, `act_label`, `status`, `chapter`
 - **IPC footnotes**: Amendment footnotes and historical annotations are interleaved with section text and may appear as inline artifacts in section `text`.
 - **BNS chapter markers**: Chapter boundaries are detected from `CHAPTER <roman>` lines in the body text. The BNS index (pages 2–19) provides section headings; the correspondence table (pages 20–73) is skipped.
 - **Source-hash safety rule**: If a source PDF hash changes, the corpus for that act is regenerated as an atomic replacement. Records from different PDF versions are never mixed in one corpus file.
+
+## MongoDB evidence store
+
+One database (`MONGODB_DB_NAME`; `MONGODB_TEST_DB_NAME` when `APP_ENV=testing`), four collections. `_id` equals the named ID field. Code: `src/building_with_rag/ingestion/mongodb_schema.py`, runner `ingest.py`.
+
+- **`sources`** (`bns_source` / `ipc_source`): `source_pdf`, `source_sha256`, `act`, `act_label`, `status`, `parser`, `parser_version`, `corpus_path`, `section_count`. Unique `act`.
+- **`sections`** (`section_id`, e.g. `bns:1`): act/chapter/heading/text fields, `source_id`, PDF provenance, `needs_review`, `access_level`, `provenance` (`corpus_file`, `record_index`). Unique `(act, section_number)`; `access_level`; `source_id`.
+- **`chunks`** (`chunk_id`): `section_id`, `chunk_index`, `chunking_version`, `text` (raw), `embedding_input`, `act`, `chapter`, `status`, `access_level`. Indexes `section_id`, `(act, chunk_index)`, `access_level`.
+- **`embeddings`** (`embedding_id`): `chunk_id`, `model`, `model_version`, `dimensions`, `vector` (1,024 floats), filter copies `act`, `chapter`, `status`, `access_level`. Unique `chunk_id`; `(act, access_level)`. Vectors never stored on `chunks`.
+
+**Chunking**: `langchain-text-splitters` `RecursiveCharacterTextSplitter`, size 2048 chars (~512 tokens), overlap 256, separators `\n\n`, `\n`, `. `, ` `, `""`; version `v1`. Chunks never cross sections. `embedding_input = "[{act_label}] {heading}\n{chunk_text}"`. Empty sections are skipped and counted.
+
+**Embeddings**: Voyage `voyage-3.5` (version `voyage-3.5`, 1,024 dims), `input_type="document"`; batches of 10 with 25 s pauses and 429 backoff.
+
+**IDs**: `chunk_id = sha256("{section_id}:{chunk_index}:{chunking_version}")[:24]`; `embedding_id = sha256("emb:{chunk_id}:{model}:{model_version}:{dimensions}")[:24]`.
+
+**Vector index** `vector_index` on `embeddings`: `vectorSearch` type, `fields` array — `vector` on `vector` (1024, cosine), `filter` on `act`, `chapter`, `status`, `access_level`.
+
+**Run**: `uv run python -m building_with_rag.ingestion.ingest` (~35–40 min on a free Voyage key; resumable; re-runs skip unchanged data).
+
+**Sample query** (`"punishment for theft"`, limit 1): _to be filled by developer after first run._
+
+### Limitations
+
+- Atlas is required (`$vectorSearch`); no fallback.
+- Single `access_level` (`public`).
+- Re-ingest is the only update path.
+- Changing dimensions or similarity requires dropping `vector_index` manually in Atlas; the runner never drops it.
+- No hybrid (text/BM25) index fields.

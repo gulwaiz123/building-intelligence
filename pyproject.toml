@@ -10,6 +10,8 @@ dependencies = [
     "uvicorn>=0.30",
     "pymongo>=4.7",
     "pymupdf>=1.28.2",
+    "langchain-text-splitters",
+    "voyageai",
 ]
 
 [dependency-groups]

@@ -1,0 +1,1 @@
+"""Ingestion pipeline: MongoDB schema, chunking, embedding, vector index."""
