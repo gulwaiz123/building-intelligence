@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from building_with_rag.contracts import QueryRequest, QueryResult
+from building_with_rag.generation.answer import generate_answer
 from building_with_rag.registry import Pattern, run_pattern
 from building_with_rag.retrieval.semantic import RetrievalError, semantic_retrieve
 from building_with_rag.settings import get_settings
@@ -26,10 +27,14 @@ def query(request: QueryRequest):
         if request.chapter is not None:
             raise _reject("chapter is not supported by semantic mode.")
         try:
-            return semantic_retrieve(request)
+            result = semantic_retrieve(request)
         except RetrievalError as e:
             return JSONResponse(
                 status_code=e.status_code, content={"code": e.code, "message": e.message}
             )
+        if request.generate_answer:
+            result.generation = generate_answer(request.question, result.results)
+            result.message += f" Answer generation: {result.generation.outcome}."
+        return result
     payload = run_pattern(request.pattern, request.question, request.caller_id)
     return QueryResult(**payload)

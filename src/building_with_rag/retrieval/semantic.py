@@ -165,9 +165,7 @@ def semantic_retrieve(request: QueryRequest) -> QueryResult:
     limit = request.limit
     filters = effective_filters(request)
     n_cand = num_candidates(limit)
-    ignored = []
-    if request.generate_answer:
-        ignored.append("generate_answer ignored: semantic mode generates no answer.")
+    ignored: list[str] = []
     trace = {
         "mode": "semantic",
         "query": request.question,

@@ -67,9 +67,32 @@ class RetrievedChunk(BaseModel):
     needs_review: bool | None = None
 
 
+class Claim(BaseModel):
+    text: str
+    evidence_labels: list[str] = Field(default_factory=list)
+
+
+class Citation(BaseModel):
+    label: str
+    chunk_id: str
+    section_id: str
+    act: str
+    heading: str = ""
+    chapter: str | None = None
+    section_number: int | None = None
+    source_pdf: str | None = None
+
+
 class GenerationResult(BaseModel):
-    text: str = ""
+    text: str = ""  # non-empty only when outcome == "answered"
     model: str | None = None
+    outcome: str | None = None  # answered | insufficient_evidence | unavailable | malformed
+    claims: list[Claim] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
+    supporting_passages: list[RetrievedChunk] = Field(default_factory=list)
+    provider: str = "openai-compatible"
+    trace: dict = Field(default_factory=dict)
+    context_outcome: str | None = None  # assembled | empty
 
 
 class QueryResult(BaseModel):
