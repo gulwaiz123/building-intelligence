@@ -30,7 +30,7 @@ curl -s http://127.0.0.1:8000/v1/query \
   -d '{"question": "What is theft?", "pattern": "semantic"}'
 ```
 
-Expected: `"status":"not_implemented"`, `"message":"Pattern 'semantic' is not implemented yet..."`.
+Expected (needs `.env` credentials and Story 2.2 data): `"status":"ok"` with ranked `results` and a populated `trace`. Without credentials: HTTP 503 `retrieval_not_ready`.
 
 ### Query — hybrid
 
@@ -153,3 +153,27 @@ uv run python scripts/extract_sections.py
 ```
 
 Expected: prints "BNS corpus up to date — skipping" and "IPC corpus up to date — skipping". No records appended or overwritten.
+
+## Story 2.3 — Semantic Retrieval
+
+What it adds: `POST /v1/query` with `pattern: "semantic"` embeds the question, runs a MongoDB vector search, and returns ranked source passages with a `trace`.
+
+Prerequisite: Story 2.2 data ingested; `.env` has `MONGODB_URI` and `VOYAGE_API_KEY`; API running as in Story 1.1.
+
+```bash
+# Success (text truncated)
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "What is the punishment for theft?", "pattern": "semantic", "limit": 3}' \
+  | jq '{status, trace, results: [.results[] | {chunk_id, section_id, act, heading, score, text: .text[:80]}]}'
+
+# No results (IPC is repealed)
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "theft", "pattern": "semantic", "filters": {"act": ["IPC_1860"], "status": ["in_force"]}}' \
+  | jq '{status, results}'
+
+# Rejected filter (HTTP 422)
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "theft", "pattern": "semantic", "filters": {"act": {"$ne": "x"}}}'
+```
+
+Expected: first returns `"status":"ok"`, at most 3 results in non-increasing `score` order, `trace.mode` `semantic`. Second returns HTTP 200, `"status":"no_results"`, `results: []`. Third prints `422`. With an empty `VOYAGE_API_KEY` the API returns HTTP 503 `retrieval_not_ready`, not `no_results`.

@@ -18,7 +18,9 @@ def test_healthz(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
-@pytest.mark.parametrize("pattern,model_id", list(PATTERN_MODEL_IDS.items()))
+@pytest.mark.parametrize(
+    "pattern,model_id", [(p, m) for p, m in PATTERN_MODEL_IDS.items() if p.value != "semantic"]
+)
 def test_query_placeholder_per_mode(client: TestClient, pattern: str, model_id: str) -> None:
     response = client.post(
         "/v1/query", json={"question": "What is theft?", "pattern": pattern.value}

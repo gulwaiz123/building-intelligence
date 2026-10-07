@@ -42,7 +42,7 @@ One shared registry (single source of truth) holds only:
 | decomposition | `rag-decomposition` |
 | hyde | `rag-hyde` |
 
-All modes return honest `not_implemented` placeholder results until their own stories add behavior.
+`semantic` is real on `/v1/query` (Story 2.3); chat for `rag-semantic` and every other mode return honest `not_implemented` placeholders until their own stories add behavior.
 
 ## API contracts
 
@@ -73,7 +73,7 @@ A retrieved passage is always this shape: `chunk_id`, `section_id`, `act`, `text
 ### Endpoints
 
 - `GET /healthz` — safe, no credentials required.
-- `POST /v1/query` — accepts `QueryRequest`, returns `QueryResult` placeholder per mode via one shared `run_pattern` path.
+- `POST /v1/query` — accepts `QueryRequest`, returns `QueryResult`: semantic retrieval for `semantic`, a `run_pattern` placeholder for other modes.
 - `GET /v1/models` — lists the six `rag-<pattern>` model IDs.
 - `POST /v1/chat/completions` — OpenAI-compatible, text-only `ChatCompletionRequest`: `model`, `messages` with `system`/`developer`/`user`/`assistant` roles, `stream`, `n`, and optional strict `rag_options` (`pattern`, list filters, `limit`, `required_acts`, `chapter`).
 
@@ -147,3 +147,23 @@ One database (`MONGODB_DB_NAME`; `MONGODB_TEST_DB_NAME` when `APP_ENV=testing`),
 - Re-ingest is the only update path.
 - Changing dimensions or similarity requires dropping `vector_index` manually in Atlas; the runner never drops it.
 - No hybrid (text/BM25) index fields.
+
+## Semantic retrieval (Story 2.3)
+
+Module: `src/building_with_rag/retrieval/semantic.py`, called from `routes/query.py` for `pattern: "semantic"` only.
+
+Flow: validate (422) → scope filters → embed question (`voyage-3.5`, `input_type="query"`, 1,024 dims) → `$vectorSearch` on `embeddings` (`vector_index`, filters inside the stage) → resolve `chunk_id` via `chunks`/`sections` → `QueryResult`.
+
+- Scope: `access_level` is fixed to `["public"]`; caller `act`/`status` lists only narrow (empty = no narrowing). Unknown fields, operators, and unsupported values → 422. `caller_id` must be omitted or equal `WEBUI_DEMO_CALLER_ID`; `required_acts`/`chapter` → 422. `generate_answer` is ignored (noted in `trace.ignored`).
+- `numCandidates` = `limit*10` clamped to `[max(limit, 50), 200]`.
+- Outcomes: `ok` (passages), `no_results` (HTTP 200, filters leave nothing; no score cutoff). 503 `retrieval_not_ready` (missing credentials, index missing/not queryable, empty or mismatched embeddings); 502 `retrieval_upstream_error` (Voyage/MongoDB failure). Scores rank similarity only; they are not proof of correctness.
+- Added optional `RetrievedChunk` fields: `chunk_index`, `act_label`, `status`, `chapter`, `chapter_title`, `section_number`, `source_pdf`, `source_sha256`, `needs_review`.
+- `trace`: `mode`, `query`, `embedding`, `index`, `limit`, `num_candidates`, `filters`, `caller_id`, `result_count`, `ignored`, `unresolved_hits`.
+
+Diagnostic (text truncated):
+
+```bash
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "What is the punishment for theft?", "pattern": "semantic", "limit": 3}' \
+  | jq '{status, trace, results: [.results[] | {chunk_id, section_id, act, heading, score, text: .text[:80]}]}'
+```

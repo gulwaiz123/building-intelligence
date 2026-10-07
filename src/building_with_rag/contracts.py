@@ -1,14 +1,32 @@
 """Shared API contracts. Later stories extend additively; never rename or add provider variants."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from building_with_rag.ingestion import mongodb_schema as schema
 from building_with_rag.registry import Pattern
 
 
 class SemanticFilters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     act: list[str] = Field(default_factory=list)
     status: list[str] = Field(default_factory=list)
     access_level: list[str] = Field(default_factory=list)
+
+    @field_validator("act")
+    @classmethod
+    def _check_act(cls, v: list[str]) -> list[str]:
+        return [schema.validate_act(x) for x in v]
+
+    @field_validator("status")
+    @classmethod
+    def _check_status(cls, v: list[str]) -> list[str]:
+        return [schema.validate_status(x) for x in v]
+
+    @field_validator("access_level")
+    @classmethod
+    def _check_access(cls, v: list[str]) -> list[str]:
+        return [schema.validate_access_level(x) for x in v]
 
 
 class QueryRequest(BaseModel):
@@ -21,6 +39,14 @@ class QueryRequest(BaseModel):
     required_acts: list[str] | None = None
     chapter: str | None = None
 
+    @field_validator("question")
+    @classmethod
+    def _strip_question(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("question must not be empty or whitespace-only")
+        return v
+
 
 class RetrievedChunk(BaseModel):
     chunk_id: str
@@ -29,7 +55,16 @@ class RetrievedChunk(BaseModel):
     text: str
     heading: str
     score: float
-    # Available source fields are attached by later stories; origin is always preserved.
+    # Optional source details; missing in the source means None, never a guess.
+    chunk_index: int | None = None
+    act_label: str | None = None
+    status: str | None = None
+    chapter: str | None = None
+    chapter_title: str | None = None
+    section_number: int | None = None
+    source_pdf: str | None = None
+    source_sha256: str | None = None
+    needs_review: bool | None = None
 
 
 class GenerationResult(BaseModel):
