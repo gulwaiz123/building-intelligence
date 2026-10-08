@@ -2,7 +2,7 @@
 title: Building with RAG
 id: building_with_rag_ui_preview
 author: Building with RAG course
-version: 0.3.0
+version: 0.3.1
 required_open_webui_version: 0.11.4
 description: Sends each chat to the capstone's Chat Completions adapter with the chosen RAG options.
 
@@ -28,7 +28,7 @@ DEFAULT_OPTIONS = {
     "required_acts": None,
     "chapter": None,
 }
-START_HINT = "uv run uvicorn building_with_rag.api.app:app --reload"
+START_HINT = "uv run uvicorn building_with_rag.app:app --reload"
 
 
 def safe_options(body: dict[str, Any]) -> dict[str, Any]:

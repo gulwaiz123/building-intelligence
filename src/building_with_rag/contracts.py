@@ -93,6 +93,11 @@ class GenerationResult(BaseModel):
     provider: str = "openai-compatible"
     trace: dict = Field(default_factory=dict)
     context_outcome: str | None = None  # assembled | empty
+    confidence: str | None = None  # high | low; None when no answer could be judged
+    issues: list[dict] = Field(default_factory=list)  # every failed check: attempt/check/detail
+    attempts: list[dict] = Field(default_factory=list)  # attempt/status/chars/latency_ms
+    draft_answer: str = ""  # last attempt text when it did not pass
+    low_confidence_reason: str = ""
 
 
 class QueryResult(BaseModel):
@@ -110,8 +115,14 @@ class QueryResult(BaseModel):
     hyde_hypothetical_text_debug: str | None = None
 
 
+class ChatRagFilters(BaseModel):
+    act: list[str] = Field(default_factory=list)
+    status: list[str] = Field(default_factory=list)
+
+
 class ChatRagOptions(BaseModel):
     pattern: Pattern = Pattern.SEMANTIC
+    filters: ChatRagFilters | None = None  # nested form sent by the Open WebUI Pipe
     act: list[str] = Field(default_factory=list)
     status: list[str] = Field(default_factory=list)
     access_level: list[str] = Field(default_factory=list)

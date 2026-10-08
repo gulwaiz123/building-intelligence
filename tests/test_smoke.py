@@ -42,7 +42,7 @@ def test_models_lists_six(client: TestClient) -> None:
 def test_chat_json_placeholder(client: TestClient) -> None:
     response = client.post(
         "/v1/chat/completions",
-        json={"model": "rag-semantic", "messages": [{"role": "user", "content": "Hi"}]},
+        json={"model": "rag-hybrid", "messages": [{"role": "user", "content": "Hi"}]},
     )
     assert response.status_code == 200
     body = response.json()

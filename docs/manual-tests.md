@@ -97,7 +97,7 @@ Expected: 422 validation error (question below min_length 1).
 ```bash
 curl -s http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "rag-semantic", "messages": [{"role": "user", "content": "What is theft?"}]}'
+  -d '{"model": "rag-hybrid", "messages": [{"role": "user", "content": "What is theft?"}]}'
 ```
 
 Expected: `"object":"chat.completion"`, `"finish_reason":"stop"`, content contains `not implemented yet`.
@@ -107,7 +107,7 @@ Expected: `"object":"chat.completion"`, `"finish_reason":"stop"`, content contai
 ```bash
 curl -s http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "rag-semantic", "messages": [{"role": "user", "content": "What is theft?"}], "stream": true}'
+  -d '{"model": "rag-hybrid", "messages": [{"role": "user", "content": "What is theft?"}], "stream": true}'
 ```
 
 Expected: SSE `data:` frames with `delta` role then content, ending with `data: [DONE]`.
@@ -177,3 +177,21 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/v1/query -H "Cont
 ```
 
 Expected: first returns `"status":"ok"`, at most 3 results in non-increasing `score` order, `trace.mode` `semantic`. Second returns HTTP 200, `"status":"no_results"`, `results: []`. Third prints `422`. With an empty `VOYAGE_API_KEY` the API returns HTTP 503 `retrieval_not_ready`, not `no_results`.
+
+## Story 3.2 — Streamed Answers with Confidence
+
+What it adds: `rag-semantic` on `/v1/chat/completions` retrieves, streams a labelled answer, validates it, and ends with a confidence/sources footer.
+
+Prerequisite: API running; `.env` has the Mongo, Voyage and `GENERATION_*` values.
+
+```bash
+curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application/json"   -d '{"model":"rag-semantic","stream":true,"messages":[{"role":"user","content":"What is the punishment for theft under the BNS?"}]}'   | grep '^data: {' | sed 's/^data: //' | jq -rj '.choices[0].delta.content // empty' | head -c 1500
+```
+
+Expected: `DRAFT — checking evidence`, answer text with `[E1]` labels, then `Evidence check passed — confidence: high` and `Sources:` lines; the stream ends with `data: [DONE]`.
+
+```bash
+curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application/json"   -d '{"model":"rag-semantic","stream":true,"messages":[{"role":"user","content":"What is the GST rate on restaurant services?"}]}'   | grep '^data: {' | sed 's/^data: //' | jq -rj '.choices[0].delta.content // empty' | head -c 600
+```
+
+Expected: one insufficient-evidence sentence, no confidence line. With `CAPSTONE_API_KEY` set, a wrong Bearer returns 401 `invalid_api_key`.

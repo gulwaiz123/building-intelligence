@@ -65,3 +65,12 @@ in **Admin Panel → Functions** disable/delete `RAG options`
 and `Building with RAG`; finally delete the custom preview model
 from **Workspace → Models**. This does not require deleting
 `$HOME/open-webui/data`.
+
+## Reading answers
+
+- `DRAFT — checking evidence` starts every attempt; the text streams while it is still being checked, so a draft cannot be retracted once shown.
+- `Check failed: … Retrying (attempt 2 of 2)…` means the first draft failed a check; the second draft follows.
+- `Evidence check passed — confidence: high` plus a `Sources:` list marks the checked answer.
+- `DRAFT — low confidence, not the final answer.` means the final draft failed the check; treat it as unverified.
+- Pairing: the Pipe Valve `capstone_api_key` must equal the app's `CAPSTONE_API_KEY` when that is set.
+- After editing a Pipe or Filter `.py` file, re-paste it via **Function Menu → Edit** and save.
