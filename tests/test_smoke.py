@@ -19,7 +19,7 @@ def test_healthz(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "pattern,model_id", [(p, m) for p, m in PATTERN_MODEL_IDS.items() if p.value != "semantic"]
+    "pattern,model_id", [(p, m) for p, m in PATTERN_MODEL_IDS.items() if p.value not in ("semantic", "hybrid")]
 )
 def test_query_placeholder_per_mode(client: TestClient, pattern: str, model_id: str) -> None:
     response = client.post(
@@ -42,7 +42,7 @@ def test_models_lists_six(client: TestClient) -> None:
 def test_chat_json_placeholder(client: TestClient) -> None:
     response = client.post(
         "/v1/chat/completions",
-        json={"model": "rag-hybrid", "messages": [{"role": "user", "content": "Hi"}]},
+        json={"model": "rag-hybrid-reranked", "messages": [{"role": "user", "content": "Hi"}]},
     )
     assert response.status_code == 200
     body = response.json()
@@ -56,7 +56,7 @@ def test_chat_stream_placeholder(client: TestClient) -> None:
         "POST",
         "/v1/chat/completions",
         json={
-            "model": "rag-hybrid",
+            "model": "rag-hybrid-reranked",
             "messages": [{"role": "user", "content": "Hi"}],
             "stream": True,
         },

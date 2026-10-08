@@ -6,30 +6,33 @@ retrieve -> answer_events (one generation/validation operation) -> final QueryRe
 from building_with_rag.contracts import GenerationResult, QueryRequest, QueryResult
 from building_with_rag.generation.answer import generate_events
 from building_with_rag.registry import Pattern, run_pattern
+from building_with_rag.retrieval.hybrid import run_hybrid
 from building_with_rag.retrieval.semantic import RetrievalError, semantic_retrieve
 from building_with_rag.settings import get_settings
 
+REAL_PATTERNS = frozenset({Pattern.SEMANTIC, Pattern.HYBRID})
 LOW_CONFIDENCE_HEAD = "DRAFT — low confidence, not the final answer."
 PASSED_HEAD = "Evidence check passed — confidence: high"
 
 
 def retrieve(request: QueryRequest) -> QueryResult:
-    """Semantic -> real retrieval; other modes -> placeholder. Raises RetrievalError."""
-    if request.pattern is not Pattern.SEMANTIC:
+    """Semantic/hybrid -> real retrieval; other modes -> placeholder. Raises RetrievalError."""
+    if request.pattern not in REAL_PATTERNS:
         payload = run_pattern(request.pattern, request.question, request.caller_id)
         return QueryResult(**payload)
+    mode = request.pattern.value
     caller = get_settings().webui_demo_caller_id
     if request.caller_id is not None and request.caller_id != caller:
         raise RetrievalError(422, "invalid_request", "caller_id does not match the effective caller.")
     if request.required_acts is not None:
-        raise RetrievalError(422, "invalid_request", "required_acts is not supported by semantic mode.")
+        raise RetrievalError(422, "invalid_request", f"required_acts is not supported by {mode} mode.")
     if request.chapter is not None:
-        raise RetrievalError(422, "invalid_request", "chapter is not supported by semantic mode.")
-    return semantic_retrieve(request)
+        raise RetrievalError(422, "invalid_request", f"chapter is not supported by {mode} mode.")
+    return run_hybrid(request) if request.pattern is Pattern.HYBRID else semantic_retrieve(request)
 
 
 def wants_generation(request: QueryRequest) -> bool:
-    return request.generate_answer and request.pattern is Pattern.SEMANTIC
+    return request.generate_answer and request.pattern in REAL_PATTERNS
 
 
 def answer_events(question: str, retrieval: QueryResult):

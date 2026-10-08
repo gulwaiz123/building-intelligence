@@ -1,4 +1,4 @@
-"""Bounded, labelled evidence context built from semantic retrieval results."""
+"""Bounded, labelled evidence context built from semantic or hybrid retrieval results."""
 
 from building_with_rag.contracts import RetrievedChunk
 

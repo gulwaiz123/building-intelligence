@@ -30,17 +30,7 @@ curl -s http://127.0.0.1:8000/v1/query \
   -d '{"question": "What is theft?", "pattern": "semantic"}'
 ```
 
-Expected (needs `.env` credentials and Story 2.2 data): `"status":"ok"` with ranked `results` and a populated `trace`. Without credentials: HTTP 503 `retrieval_not_ready`.
-
-### Query — hybrid
-
-```bash
-curl -s http://127.0.0.1:8000/v1/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is theft?", "pattern": "hybrid"}'
-```
-
-Expected: `"status":"not_implemented"`, message references `hybrid`.
+Expected: `"status":"not_implemented"`, `"message":"Pattern 'semantic' is not implemented yet..."`.
 
 ### Query — hybrid-reranked
 
@@ -97,7 +87,7 @@ Expected: 422 validation error (question below min_length 1).
 ```bash
 curl -s http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "rag-hybrid", "messages": [{"role": "user", "content": "What is theft?"}]}'
+  -d '{"model": "rag-semantic", "messages": [{"role": "user", "content": "What is theft?"}]}'
 ```
 
 Expected: `"object":"chat.completion"`, `"finish_reason":"stop"`, content contains `not implemented yet`.
@@ -107,7 +97,7 @@ Expected: `"object":"chat.completion"`, `"finish_reason":"stop"`, content contai
 ```bash
 curl -s http://127.0.0.1:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "rag-hybrid", "messages": [{"role": "user", "content": "What is theft?"}], "stream": true}'
+  -d '{"model": "rag-semantic", "messages": [{"role": "user", "content": "What is theft?"}], "stream": true}'
 ```
 
 Expected: SSE `data:` frames with `delta` role then content, ending with `data: [DONE]`.
@@ -153,45 +143,52 @@ uv run python scripts/extract_sections.py
 ```
 
 Expected: prints "BNS corpus up to date — skipping" and "IPC corpus up to date — skipping". No records appended or overwritten.
+## Story 2.2 — MongoDB, Chunks, Embeddings, and Vector Index
 
-## Story 2.3 — Semantic Retrieval
+What it adds: an ingestion runner that loads the JSONL corpora into MongoDB as `sources`, `sections`, `chunks`, and `embeddings`, embeds every chunk with Voyage, and creates the Atlas `vector_index` on `embeddings.vector`.
 
-What it adds: `POST /v1/query` with `pattern: "semantic"` embeds the question, runs a MongoDB vector search, and returns ranked source passages with a `trace`.
+Prerequisite: Story 2.1 complete (both JSONL files present), and `.env` holds `MONGODB_URI` (Atlas cluster), `MONGODB_DB_NAME`, `VOYAGE_API_KEY`. First run takes roughly 35–40 minutes on a free Voyage key.
 
-Prerequisite: Story 2.2 data ingested; `.env` has `MONGODB_URI` and `VOYAGE_API_KEY`; API running as in Story 1.1.
+### Run ingestion
+
+```bash
+uv run python -m building_with_rag.ingestion.ingest
+```
+
+Expected: steps 1–10 print in order. `sources=2`, `sections=858` with the supplied PDFs, `chunks` > 0, and `embeddings == chunks: True`. `bns:1 chunks` shows one or more with `all linked: True`, sample vector length 1024, index status `READY`, and the sample query for "punishment for theft" prints `chunk_id`, `section_id`, heading, and score (or `vector query pending — index not ready`).
+
+### Re-run (skip)
+
+```bash
+uv run python -m building_with_rag.ingestion.ingest
+```
+
+Expected: sources and sections report skipped, chunks report all skipped with 0 inserted/replaced, `Embeddings: 0 inserted, <n> skipped, 0 deleted` (no Voyage calls), and the existing `vector_index` is reused rather than recreated.
+
+### Missing MongoDB URI (failure)
+
+```bash
+MONGODB_URI= uv run python -m building_with_rag.ingestion.ingest
+```
+
+Expected: stops at step 1 with `MongoDB unavailable: MONGODB_URI is empty. Set it in .env and re-run.` Nothing is written and no Voyage call is made.
+
+## Story 4.1 — Hybrid Search
+
+What it adds: `pattern: "hybrid"` (`rag-hybrid`) fuses Atlas Search keyword hits on `chunks.text` with semantic hits using Reciprocal Rank Fusion.
+
+Prerequisite: API running; `.env` has `MONGODB_URI`, `VOYAGE_API_KEY`; create the keyword index once with `uv run python -m building_with_rag.ingestion.keyword_index` (ends with `chunk_text_index: READY (queryable)`; re-run reuses it).
 
 ```bash
 # Success (text truncated)
-curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
-  -d '{"question": "What is the punishment for theft?", "pattern": "semantic", "limit": 3}' \
-  | jq '{status, trace, results: [.results[] | {chunk_id, section_id, act, heading, score, text: .text[:80]}]}'
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json"   -d '{"question": "criminal breach of trust", "pattern": "hybrid", "limit": 5}'   | jq '{status, t: (.trace | {fusion, contribution}), r: [.results[] | {section_id, score, sr: .semantic_rank, kr: .keyword_rank, fr: .fused_rank, text: .text[:60]}]}'
 
-# No results (IPC is repealed)
-curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
-  -d '{"question": "theft", "pattern": "semantic", "filters": {"act": ["IPC_1860"], "status": ["in_force"]}}' \
-  | jq '{status, results}'
+# Edge: unsupported chapter filter (HTTP 422)
+curl -s -o /dev/null -w "%{http_code}
+" http://127.0.0.1:8000/v1/query -H "Content-Type: application/json"   -d '{"question": "theft", "pattern": "hybrid", "chapter": "XVII"}'
 
-# Rejected filter (HTTP 422)
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
-  -d '{"question": "theft", "pattern": "semantic", "filters": {"act": {"$ne": "x"}}}'
+# Chat, streamed
+curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application/json"   -d '{"model": "rag-hybrid", "stream": true, "messages": [{"role": "user", "content": "What is criminal breach of trust?"}]}'   | grep '^data: {' | sed 's/^data: //' | jq -rj '.choices[0].delta.content // empty' | head -c 1500
 ```
 
-Expected: first returns `"status":"ok"`, at most 3 results in non-increasing `score` order, `trace.mode` `semantic`. Second returns HTTP 200, `"status":"no_results"`, `results: []`. Third prints `422`. With an empty `VOYAGE_API_KEY` the API returns HTTP 503 `retrieval_not_ready`, not `no_results`.
-
-## Story 3.2 — Streamed Answers with Confidence
-
-What it adds: `rag-semantic` on `/v1/chat/completions` retrieves, streams a labelled answer, validates it, and ends with a confidence/sources footer.
-
-Prerequisite: API running; `.env` has the Mongo, Voyage and `GENERATION_*` values.
-
-```bash
-curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application/json"   -d '{"model":"rag-semantic","stream":true,"messages":[{"role":"user","content":"What is the punishment for theft under the BNS?"}]}'   | grep '^data: {' | sed 's/^data: //' | jq -rj '.choices[0].delta.content // empty' | head -c 1500
-```
-
-Expected: `DRAFT — checking evidence`, answer text with `[E1]` labels, then `Evidence check passed — confidence: high` and `Sources:` lines; the stream ends with `data: [DONE]`.
-
-```bash
-curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application/json"   -d '{"model":"rag-semantic","stream":true,"messages":[{"role":"user","content":"What is the GST rate on restaurant services?"}]}'   | grep '^data: {' | sed 's/^data: //' | jq -rj '.choices[0].delta.content // empty' | head -c 600
-```
-
-Expected: one insufficient-evidence sentence, no confidence line. With `CAPSTONE_API_KEY` set, a wrong Bearer returns 401 `invalid_api_key`.
+Expected: first returns `"status":"ok"`, at most 5 results in non-increasing `score` (`score` = fused score, `fr` = position), each with `sr` and/or `kr`, `trace.fusion` `rrf`/`k` 60. Second prints `422`. Third streams a `DRAFT` line, `[E1]`-labelled answer, `Evidence check passed — confidence: high` and `Sources:`, and the stream ends with `data: [DONE]`. If `chunk_text_index` is missing, hybrid returns HTTP 503 `retrieval_not_ready` while `semantic` still works.

@@ -42,7 +42,7 @@ def effective_filters(request: QueryRequest) -> dict[str, list[str]]:
     }
 
 
-def _db():
+def default_db():
     global _mongo
     s = get_settings()
     if _mongo is None:
@@ -76,7 +76,7 @@ def _ensure_ready() -> None:
     if not s.mongodb_uri or not s.voyage_api_key:
         raise _not_ready("MONGODB_URI and VOYAGE_API_KEY must be set.")
     try:
-        coll = _db()[schema.EMBEDDINGS_COLLECTION]
+        coll = default_db()[schema.EMBEDDINGS_COLLECTION]
         idx = next(
             (i for i in coll.list_search_indexes() if i.get("name") == schema.VECTOR_INDEX_NAME),
             None,
@@ -120,8 +120,29 @@ def _search_filter(filters: dict[str, list[str]]) -> dict:
     return {"$and": [{field: {"$in": vals}} for field, vals in filters.items() if vals]}
 
 
-def _resolve(db, hits: list[dict]) -> tuple[list[RetrievedChunk], int]:
-    ids = [h["chunk_id"] for h in hits]
+def chunk_result(chunk: dict, section: dict, score: float, **extra) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id=chunk["chunk_id"],
+        section_id=section["section_id"],
+        act=section.get("act") or chunk.get("act") or "",
+        text=chunk.get("text") or "",
+        heading=section.get("heading") or "",
+        score=float(score),
+        chunk_index=chunk.get("chunk_index"),
+        act_label=section.get("act_label"),
+        status=section.get("status"),
+        chapter=section.get("chapter"),
+        chapter_title=section.get("chapter_title"),
+        section_number=section.get("section_number"),
+        source_pdf=section.get("source_pdf"),
+        source_sha256=section.get("source_sha256"),
+        needs_review=section.get("needs_review"),
+        **extra,
+    )
+
+
+def resolve_chunks(db, ids: list[str]) -> tuple[dict, dict]:
+    """Return ({chunk_id: chunk}, {section_id: section}) for the given chunk IDs."""
     chunks = {
         c["chunk_id"]: c for c in db[schema.CHUNKS_COLLECTION].find({"chunk_id": {"$in": ids}})
     }
@@ -130,6 +151,43 @@ def _resolve(db, hits: list[dict]) -> tuple[list[RetrievedChunk], int]:
         s["section_id"]: s
         for s in db[schema.SECTIONS_COLLECTION].find({"section_id": {"$in": sec_ids}})
     }
+    return chunks, sections
+
+
+def vector_hits(request: QueryRequest, limit: int, db, embed_query=None) -> tuple[list[dict], dict]:
+    """Embed the question and run $vectorSearch; returns (hits, {"num_candidates": n}).
+
+    Raises RetrievalError 502 on Voyage or MongoDB failure.
+    """
+    n_cand = num_candidates(limit)
+    vec = (embed_query or _embed)(request.question)
+    try:
+        hits = list(
+            db[schema.EMBEDDINGS_COLLECTION].aggregate(
+                [
+                    {
+                        "$vectorSearch": {
+                            "index": schema.VECTOR_INDEX_NAME,
+                            "path": "vector",
+                            "queryVector": vec,
+                            "numCandidates": n_cand,
+                            "limit": limit,
+                            "filter": _search_filter(effective_filters(request)),
+                        }
+                    },
+                    {"$project": {"_id": 0, "chunk_id": 1, "score": {"$meta": "vectorSearchScore"}}},
+                ]
+            )
+        )
+    except Exception:  # noqa: BLE001 - upstream details must not leak
+        raise RetrievalError(
+            502, "retrieval_upstream_error", "MongoDB vector search failed."
+        ) from None
+    return hits, {"num_candidates": n_cand}
+
+
+def _resolve(db, hits: list[dict]) -> tuple[list[RetrievedChunk], int]:
+    chunks, sections = resolve_chunks(db, [h["chunk_id"] for h in hits])
     out: list[RetrievedChunk] = []
     unresolved = 0
     for h in hits:
@@ -138,25 +196,7 @@ def _resolve(db, hits: list[dict]) -> tuple[list[RetrievedChunk], int]:
         if c is None or s is None:
             unresolved += 1
             continue
-        out.append(
-            RetrievedChunk(
-                chunk_id=c["chunk_id"],
-                section_id=s["section_id"],
-                act=s.get("act") or c.get("act") or "",
-                text=c.get("text") or "",
-                heading=s.get("heading") or "",
-                score=float(h["score"]),
-                chunk_index=c.get("chunk_index"),
-                act_label=s.get("act_label"),
-                status=s.get("status"),
-                chapter=s.get("chapter"),
-                chapter_title=s.get("chapter_title"),
-                section_number=s.get("section_number"),
-                source_pdf=s.get("source_pdf"),
-                source_sha256=s.get("source_sha256"),
-                needs_review=s.get("needs_review"),
-            )
-        )
+        out.append(chunk_result(c, s, h["score"]))
     return out, unresolved
 
 
@@ -186,7 +226,7 @@ def semantic_retrieve(request: QueryRequest) -> QueryResult:
     try:
         _ensure_ready()
         vec = _embed(request.question)
-        db = _db()
+        db = default_db()
         try:
             hits = list(
                 db[schema.EMBEDDINGS_COLLECTION].aggregate(

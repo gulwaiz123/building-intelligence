@@ -146,7 +146,7 @@ One database (`MONGODB_DB_NAME`; `MONGODB_TEST_DB_NAME` when `APP_ENV=testing`),
 - Single `access_level` (`public`).
 - Re-ingest is the only update path.
 - Changing dimensions or similarity requires dropping `vector_index` manually in Atlas; the runner never drops it.
-- No hybrid (text/BM25) index fields.
+- Keyword search uses the Atlas Search index `chunk_text_index` on `chunks` (Story 4.1); no `$text`, regex or client-side scoring.
 
 ## Semantic retrieval (Story 2.3)
 
@@ -188,3 +188,15 @@ Flow: semantic `QueryResult.results` → bounded labelled context (`generation/c
 - Open WebUI labels: `DRAFT — checking evidence`; `Check failed: … Retrying (attempt 2 of 2)…`; `Evidence check passed — confidence: high` + `Sources:` lines; `DRAFT — low confidence, not the final answer.`. Streamed text cannot be retracted, so drafts stay visible.
 - Failure after text began: `Answer generation unavailable — the text above is an unchecked draft.`, then `stop` and `[DONE]` (HTTP 200).
 - `CAPSTONE_API_KEY`: when non-empty, `/v1/chat/completions` requires `Authorization: Bearer <key>` (constant-time compare, else 401 `invalid_api_key`). Empty = no check. `/v1/query`, `/v1/models`, `/healthz` are unchanged.
+
+## Hybrid retrieval (Story 4.1)
+
+- `pattern: "hybrid"` (`rag-hybrid`) runs two routes over the same chunks and fuses them; selected explicitly, never automatic. Context, citations, confidence and streaming are the shared Story 3.x path (`pipeline.REAL_PATTERNS`).
+- Keyword route: Atlas Search `$search` with the `text` operator (BM25) on `chunks.text`, index `chunk_text_index` (`dynamic: false`; `text` `lucene.standard`; `act`, `status`, `access_level` tokens). Filters use `compound.filter` `in`, same effective filters as semantic. Create with `uv run python -m building_with_rag.ingestion.keyword_index` (idempotent; differing definitions are reported, never replaced).
+- Semantic route: Story 2.3 embedding and `$vectorSearch`.
+- Fusion: Reciprocal Rank Fusion over ranks, `fused_score = sum(1/(RRF_K+rank))`, `RRF_K = 60`, equal weights; each route returns `ROUTE_DEPTH = max(limit, min(50, max(20, 4*limit)))`. Order: fused score desc, then `semantic_rank` (missing last), then `chunk_id`. Chunks fuse by `chunk_id`.
+- `RetrievedChunk` adds optional `semantic_score/rank`, `keyword_score/rank`, `fused_score/rank` (hybrid only; `None` when a route did not return the chunk). `score` = `fused_score`.
+- Trace: `mode`, `query`, `embedding`, `filters`, `caller_id`, `result_count`, `unresolved_hits`, `semantic`, `keyword`, `fusion`, `contribution`.
+- Outcomes: `ok`, `no_results` (both routes empty), 503 `retrieval_not_ready` (credentials, vector or keyword index not ready; never degrades to semantic-only), 502 `retrieval_upstream_error`. `required_acts`, `chapter` and foreign `caller_id` are 422.
+- Limitations: rank-only fusion ignores score magnitude; `text` matches any query term (OR), so long questions pull in common words; section numbers match only inside chunk `text`; standard analyzer only (no stemming or synonyms).
+- Diagnostic: `curl -s .../v1/query -d '{"question":"<q>","pattern":"hybrid","limit":5}' | jq '{status, t: (.trace | {semantic, keyword, fusion, contribution}), r: [.results[] | {section_id, score, sr: .semantic_rank, kr: .keyword_rank, fr: .fused_rank}]}'`.
