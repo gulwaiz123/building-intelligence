@@ -89,7 +89,7 @@ The trainer-supplied Open WebUI bundle is the chat client, run separately from t
 
 - `.env` is untracked; secrets are never committed.
 - The application must start with no database or model credentials and expose a safe `GET /healthz`.
-- Canonical environment values are defined in `.env.example`.
+- Canonical environment values are defined in `.env.example`. `RERANK_API_KEY` (empty by default) is required only by `hybrid-reranked`.
 
 ## Corpus
 
@@ -200,3 +200,16 @@ Flow: semantic `QueryResult.results` → bounded labelled context (`generation/c
 - Outcomes: `ok`, `no_results` (both routes empty), 503 `retrieval_not_ready` (credentials, vector or keyword index not ready; never degrades to semantic-only), 502 `retrieval_upstream_error`. `required_acts`, `chapter` and foreign `caller_id` are 422.
 - Limitations: rank-only fusion ignores score magnitude; `text` matches any query term (OR), so long questions pull in common words; section numbers match only inside chunk `text`; standard analyzer only (no stemming or synonyms).
 - Diagnostic: `curl -s .../v1/query -d '{"question":"<q>","pattern":"hybrid","limit":5}' | jq '{status, t: (.trace | {semantic, keyword, fusion, contribution}), r: [.results[] | {section_id, score, sr: .semantic_rank, kr: .keyword_rank, fr: .fused_rank}]}'`.
+
+## Re-ranking (Story 4.2)
+
+- `pattern: "hybrid-reranked"` (`rag-hybrid-reranked`) is selected explicitly; flow: `run_hybrid` (limit = `RERANK_CANDIDATE_LIMIT`) -> first `RERANK_SEND_LIMIT` sent in one call -> final evidence. Context, answer, citations, confidence and streaming are the shared path (`pipeline.REAL_PATTERNS`); `assemble_context` sees `results` only, never `omitted_candidates`.
+- Settings: `RERANK_API_KEY` (empty), `RERANK_API_BASE_URL` (`https://api.voyageai.com/v1`), `RERANK_MODEL_NAME` (`rerank-2.5`), `RERANK_REQUEST_TIMEOUT_SECONDS` (30), `RERANK_CANDIDATE_LIMIT` (20), `RERANK_SEND_LIMIT` (10), `RERANK_RETURN_LIMIT` (5). Valid when `1 <= RETURN <= SEND <= CANDIDATE <= 20` and timeout >= 1; otherwise 503 `retrieval_not_ready` naming the setting.
+- Request: one `POST {base}/rerank` (httpx, Bearer key, `{model, query, documents}`, no `top_k`, no retries); document = `"{heading}
+{chunk text}"`. Reply: `data[]` of `{index, relevance_score}`, optional `usage.total_tokens`; validated (non-empty, unique in-range int `index`, finite score, every sent candidate scored) or 502 `retrieval_upstream_error`. No fallback to hybrid order.
+- Selection: order sent candidates by `relevance_score` desc (ties `fused_rank`); keep `min(limit, RERANK_RETURN_LIMIT)`. Cut before the call: `omitted_reason: "not_sent_to_reranker"` (rerank fields `None`); cut after: `below_return_limit` (rerank fields kept).
+- `RetrievedChunk` adds optional `rerank_score`, `rerank_rank`, `omitted_reason`; `results` are ordered by `rerank_rank` with `score == rerank_score`, hybrid fields kept as the "before" evidence; `QueryResult.omitted_candidates` holds every cut candidate in `fused_rank` order.
+- Trace: `mode`, `query`, `filters`, `caller_id`, `result_count`, `hybrid` (embedding, semantic, keyword, fusion, contribution, unresolved_hits), `rerank` (model, limits, counts, `latency_ms`, `usage_tokens`).
+- Outcomes: `ok`, `no_results` (no provider call), 503 `retrieval_not_ready`, 502 `retrieval_upstream_error`; hybrid errors pass through.
+- Limitations: candidates beyond the top `RERANK_CANDIDATE_LIMIT` are never seen; each passage is scored independently against the question; scores are model-specific, uncalibrated, not comparable with fused scores or across questions, with no cutoff; one extra provider call per request (latency, cost, rate limits); no retry; the answer context cap (5 passages / 12,000 chars) still applies.
+- Diagnostic: see the Story 4.2 section of `docs/manual-tests.md`.

@@ -7,16 +7,17 @@ from building_with_rag.contracts import GenerationResult, QueryRequest, QueryRes
 from building_with_rag.generation.answer import generate_events
 from building_with_rag.registry import Pattern, run_pattern
 from building_with_rag.retrieval.hybrid import run_hybrid
+from building_with_rag.retrieval.rerank import run_hybrid_reranked
 from building_with_rag.retrieval.semantic import RetrievalError, semantic_retrieve
 from building_with_rag.settings import get_settings
 
-REAL_PATTERNS = frozenset({Pattern.SEMANTIC, Pattern.HYBRID})
+REAL_PATTERNS = frozenset({Pattern.SEMANTIC, Pattern.HYBRID, Pattern.HYBRID_RERANKED})
 LOW_CONFIDENCE_HEAD = "DRAFT — low confidence, not the final answer."
 PASSED_HEAD = "Evidence check passed — confidence: high"
 
 
 def retrieve(request: QueryRequest) -> QueryResult:
-    """Semantic/hybrid -> real retrieval; other modes -> placeholder. Raises RetrievalError."""
+    """Semantic/hybrid/hybrid-reranked -> real retrieval; other modes -> placeholder. Raises RetrievalError."""
     if request.pattern not in REAL_PATTERNS:
         payload = run_pattern(request.pattern, request.question, request.caller_id)
         return QueryResult(**payload)
@@ -28,6 +29,8 @@ def retrieve(request: QueryRequest) -> QueryResult:
         raise RetrievalError(422, "invalid_request", f"required_acts is not supported by {mode} mode.")
     if request.chapter is not None:
         raise RetrievalError(422, "invalid_request", f"chapter is not supported by {mode} mode.")
+    if request.pattern is Pattern.HYBRID_RERANKED:
+        return run_hybrid_reranked(request)
     return run_hybrid(request) if request.pattern is Pattern.HYBRID else semantic_retrieve(request)
 
 

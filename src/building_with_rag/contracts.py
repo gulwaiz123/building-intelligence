@@ -72,6 +72,10 @@ class RetrievedChunk(BaseModel):
     keyword_rank: int | None = None
     fused_score: float | None = None
     fused_rank: int | None = None
+    # Hybrid-reranked only.
+    rerank_score: float | None = None
+    rerank_rank: int | None = None
+    omitted_reason: str | None = None
 
 
 class Claim(BaseModel):

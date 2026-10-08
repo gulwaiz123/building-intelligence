@@ -86,7 +86,7 @@ def keyword_hits(request: QueryRequest, filters: dict[str, list[str]], depth: in
             "compound": {
                 "must": [{"text": {"query": request.question, "path": "text"}}],
                 "filter": [{"in": {"path": path, "value": values}}
-                           for path, values in filters.items()],
+                           for path, values in filters.items() if values],
             },
         }},
         {"$limit": depth},

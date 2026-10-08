@@ -60,7 +60,7 @@ def _voyage_client():
     if _voyage is None:
         from voyageai import Client
 
-        _voyage = Client(api_key=get_settings().voyage_api_key, timeout=15, max_retries=1)
+        _voyage = Client(api_key=get_settings().voyage_api_key, timeout=15, max_retries=4)
     return _voyage
 
 

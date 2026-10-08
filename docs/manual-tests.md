@@ -32,16 +32,6 @@ curl -s http://127.0.0.1:8000/v1/query \
 
 Expected: `"status":"not_implemented"`, `"message":"Pattern 'semantic' is not implemented yet..."`.
 
-### Query — hybrid-reranked
-
-```bash
-curl -s http://127.0.0.1:8000/v1/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is theft?", "pattern": "hybrid-reranked"}'
-```
-
-Expected: `"status":"not_implemented"`, message references `hybrid-reranked`.
-
 ### Query — structured
 
 ```bash
@@ -192,3 +182,23 @@ curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application
 ```
 
 Expected: first returns `"status":"ok"`, at most 5 results in non-increasing `score` (`score` = fused score, `fr` = position), each with `sr` and/or `kr`, `trace.fusion` `rrf`/`k` 60. Second prints `422`. Third streams a `DRAFT` line, `[E1]`-labelled answer, `Evidence check passed — confidence: high` and `Sources:`, and the stream ends with `data: [DONE]`. If `chunk_text_index` is missing, hybrid returns HTTP 503 `retrieval_not_ready` while `semantic` still works.
+
+## Story 4.2 — Hybrid Re-ranking
+
+What it adds: `pattern: "hybrid-reranked"` (`rag-hybrid-reranked`) re-scores up to `RERANK_CANDIDATE_LIMIT` hybrid candidates with one re-ranking call and keeps the best `min(limit, RERANK_RETURN_LIMIT)`.
+
+Prerequisite: API running; `.env` has `MONGODB_URI`, `VOYAGE_API_KEY`, `GENERATION_*`, `RERANK_API_KEY`; keyword index created (Story 4.1).
+
+```bash
+# Success (text truncated; returned and omitted records merged)
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json"   -d '{"question": "What is the difference between culpable homicide and murder?", "pattern": "hybrid-reranked", "limit": 5}'   | jq '{status, t: .trace.rerank, r: [(.results[]|.+{kept:true}), (.omitted_candidates[]|.+{kept:false})] | map({section_id, kept, fr: .fused_rank, rr: .rerank_rank, rs: .rerank_score, why: .omitted_reason, text: .text[:50]}) | sort_by(.fr)}'
+
+# Edge: unsupported chapter filter (HTTP 422)
+curl -s -o /dev/null -w "%{http_code}
+" http://127.0.0.1:8000/v1/query -H "Content-Type: application/json"   -d '{"question": "theft", "pattern": "hybrid-reranked", "chapter": "XVII"}'
+
+# Chat, streamed
+curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application/json"   -d '{"model": "rag-hybrid-reranked", "stream": true, "messages": [{"role": "user", "content": "What is the difference between culpable homicide and murder?"}]}'   | grep '^data: {' | sed 's/^data: //' | jq -rj '.choices[0].delta.content // empty' | head -c 1500
+```
+
+Expected: first returns `"status":"ok"`, `kept:true` records ordered by `rerank_rank` (1..n, `score` = `rerank_score`) with their `fused_rank`, the rest `kept:false` with `omitted_reason` `not_sent_to_reranker` or `below_return_limit`; `trace.rerank` shows counts and `latency_ms`. Second prints `422`. Third streams `DRAFT`, `[E1]`-labelled answer, `Evidence check passed — confidence: high`, `Sources:` (cited from kept results only) and ends with `data: [DONE]`. With `RERANK_API_KEY` empty, `hybrid-reranked` returns HTTP 503 `retrieval_not_ready` (no hybrid fallback); a provider failure returns 502 `retrieval_upstream_error`.
