@@ -1,5 +1,7 @@
 """Shared API contracts. Later stories extend additively; never rename or add provider variants."""
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from building_with_rag.ingestion import mongodb_schema as schema
@@ -76,6 +78,19 @@ class RetrievedChunk(BaseModel):
     rerank_score: float | None = None
     rerank_rank: int | None = None
     omitted_reason: str | None = None
+
+
+class StructuredSignals(BaseModel):
+    """Validated output of the structured-mode classifier; the only input to MongoDB."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: Literal["exact_lookup", "filter", "aggregation"] | None = None
+    act: Literal["BNS_2023", "IPC_1860"] | None = None
+    section_number: int | None = Field(default=None, ge=1, le=999)
+    chapter: str | None = None
+    status: Literal["ok", "recommendation", "clarification_needed"]
+    reason: str
 
 
 class Claim(BaseModel):

@@ -88,7 +88,7 @@ def _retrieve(query_request: QueryRequest) -> QueryResult:
 
 def _pieces(query_request: QueryRequest, result: QueryResult):
     """Yield the text pieces a client receives; footer is derived from the same final result."""
-    if not wants_generation(query_request):
+    if not wants_generation(query_request, result):
         yield result.message
         return
     for kind, payload in answer_events(query_request.question, result):

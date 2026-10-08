@@ -32,16 +32,6 @@ curl -s http://127.0.0.1:8000/v1/query \
 
 Expected: `"status":"not_implemented"`, `"message":"Pattern 'semantic' is not implemented yet..."`.
 
-### Query — structured
-
-```bash
-curl -s http://127.0.0.1:8000/v1/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What is theft?", "pattern": "structured"}'
-```
-
-Expected: `"status":"not_implemented"`, message references `structured`.
-
 ### Query — decomposition
 
 ```bash
@@ -202,3 +192,32 @@ curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application
 ```
 
 Expected: first returns `"status":"ok"`, `kept:true` records ordered by `rerank_rank` (1..n, `score` = `rerank_score`) with their `fused_rank`, the rest `kept:false` with `omitted_reason` `not_sent_to_reranker` or `below_return_limit`; `trace.rerank` shows counts and `latency_ms`. Second prints `422`. Third streams `DRAFT`, `[E1]`-labelled answer, `Evidence check passed — confidence: high`, `Sources:` (cited from kept results only) and ends with `data: [DONE]`. With `RERANK_API_KEY` empty, `hybrid-reranked` returns HTTP 503 `retrieval_not_ready` (no hybrid fallback); a provider failure returns 502 `retrieval_upstream_error`.
+
+## Story 5.1 — Structured Exact Retrieval
+
+What it adds: `pattern: "structured"` (`rag-structured`) classifies the question by rules and returns the exact BNS or IPC section named, using one read-only `sections` lookup (no Voyage call).
+
+Prerequisite: API running; `.env` has `MONGODB_URI`; Story 2.2 data ingested.
+
+```bash
+# Success (text truncated)
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "What does BNS section 103 say?", "pattern": "structured"}' \
+  | jq '{status, t: (.trace | {signals, mongodb_called, record}), r: [.results[] | {section_id, act, status, text: .text[:60]}]}'
+
+# Ambiguous: no act named
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "What does section 103 say?", "pattern": "structured"}' \
+  | jq '{status, message, mongodb_called: .trace.mongodb_called, results}'
+
+# Missing record (IPC section 4 is not extracted)
+curl -s http://127.0.0.1:8000/v1/query -H "Content-Type: application/json" \
+  -d '{"question": "IPC section 4", "pattern": "structured"}' | jq '{status, mongodb_called: .trace.mongodb_called, results}'
+
+# Chat, streamed
+curl -sN http://127.0.0.1:8000/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"model": "rag-structured", "stream": true, "messages": [{"role": "user", "content": "What does BNS section 103 say?"}]}' \
+  | grep '^data: {' | sed 's/^data: //' | jq -rj '.choices[0].delta.content // empty' | head -c 1500
+```
+
+Expected: first returns `"status":"ok"`, one result `bns:103` (`score` 1.0 = exact match, not similarity), `mongodb_called: true`, `record` with `status` and `source_status_version`. Second returns `clarification_needed`, empty `results`, `mongodb_called: false`, message asking for the act. Third returns HTTP 200 `not_found`, empty `results`, `mongodb_called: true`. Fourth streams `DRAFT`, an answer citing `[E1]`, `Evidence check passed — confidence: high`, `Sources:`, and ends with `data: [DONE]`; an ambiguous question streams the clarification text instead.

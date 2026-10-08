@@ -42,7 +42,7 @@ One shared registry (single source of truth) holds only:
 | decomposition | `rag-decomposition` |
 | hyde | `rag-hyde` |
 
-`semantic` is real on `/v1/query` (Story 2.3); chat for `rag-semantic` uses the same pipeline with streamed, validated answers (Story 3.2); other modes return honest `not_implemented` placeholders until their own stories add behavior.
+`semantic` is real on `/v1/query` (Story 2.3); chat for `rag-semantic` uses the same pipeline with streamed, validated answers (Story 3.2); `hybrid` (4.1), `hybrid-reranked` (4.2) and `structured` (5.1) are real in both endpoints; `decomposition` and `hyde` return honest `not_implemented` placeholders until their own stories add behavior.
 
 ## API contracts
 
@@ -213,3 +213,12 @@ Flow: semantic `QueryResult.results` → bounded labelled context (`generation/c
 - Outcomes: `ok`, `no_results` (no provider call), 503 `retrieval_not_ready`, 502 `retrieval_upstream_error`; hybrid errors pass through.
 - Limitations: candidates beyond the top `RERANK_CANDIDATE_LIMIT` are never seen; each passage is scored independently against the question; scores are model-specific, uncalibrated, not comparable with fused scores or across questions, with no cutoff; one extra provider call per request (latency, cost, rate limits); no retry; the answer context cap (5 passages / 12,000 chars) still applies.
 - Diagnostic: see the Story 4.2 section of `docs/manual-tests.md`.
+
+## Structured exact retrieval (Story 5.1)
+
+- `pattern: "structured"` (`rag-structured`): rule-based `classify` (no LLM, no I/O) -> validated `StructuredSignals` (`contracts.py`) -> one read-only `find_one` on `sections`. No Voyage, embedding, vector or keyword index; no fallback to or from other modes.
+- **Exact-input contract:** only classifier output (`act`, `section_number`, optional validated `chapter`) plus server-fixed `access_level` (and an optional `status` filter) reach MongoDB; raw question text never does. Classified: `aggregation` ("how many", "count"), `filter` ("list", "all sections", "sections in/under") -> `recommendation`, no lookup; section reference (`section N`, `sec. N`, `s. N`, `§N`) plus one act (`BNS`, `IPC`, full names) -> `ok`. Refused as `clarification_needed`: no act, both acts, several numbers, `103A`, number outside 1-999, or an `act` filter excluding the named act. Anything else -> `recommendation` (use `semantic`/`hybrid`). `chapter` is 1-40 letters/digits/space/`.`/`-` (else 422 `unsupported_option`); `required_acts` and foreign `caller_id` are 422.
+- Result: `ok` -> one `RetrievedChunk` (`chunk_id = section_id`, `score = 1.0` marks an exact match, not a similarity); `not_found` (this corpus has no such record, not that the law has none); `clarification_needed`; `recommendation`. Missing `MONGODB_URI` (only when a lookup is needed) -> 503 `retrieval_not_ready`; MongoDB failure -> 502 `retrieval_upstream_error`.
+- Trace: `mode`, `signals`, `mongodb_called`, `collection`, `filters`, `caller_id`, `result_count`, and for `ok` `record` (`section_id`, `status`, `source_status_version`).
+- **Answer boundary:** retrieval returns the exact record; an explanation exists only through the existing grounded-answer path when `generate_answer` (always in chat). `not_found`, `clarification_needed` and `recommendation` never call the model: `/v1/query` leaves `generation` unset and chat streams `message`. `status`/`source_status_version` are source metadata, not current legal applicability.
+- Limitations: integer sections only (no `103A`); no multi-section or cross-act comparison; filter and aggregation are recognised but not executed; IPC sections 4, 5, 18, 34, 40, 75, 161-165 are absent from `sections`; rule-based phrasing misses; a section longer than the 12,000-char context cap yields `insufficient_evidence` when answered (direct inspection still returns it).

@@ -18,6 +18,6 @@ def query(request: QueryRequest):
         if e.status_code == 422:
             raise HTTPException(status_code=422, detail=e.message) from None
         return JSONResponse(status_code=e.status_code, content={"code": e.code, "message": e.message})
-    if wants_generation(request):
+    if wants_generation(request, result):
         run_generation(request.question, result)
     return result

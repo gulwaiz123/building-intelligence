@@ -9,9 +9,10 @@ from building_with_rag.registry import Pattern, run_pattern
 from building_with_rag.retrieval.hybrid import run_hybrid
 from building_with_rag.retrieval.rerank import run_hybrid_reranked
 from building_with_rag.retrieval.semantic import RetrievalError, semantic_retrieve
+from building_with_rag.retrieval.structured import run_structured
 from building_with_rag.settings import get_settings
 
-REAL_PATTERNS = frozenset({Pattern.SEMANTIC, Pattern.HYBRID, Pattern.HYBRID_RERANKED})
+REAL_PATTERNS = frozenset({Pattern.SEMANTIC, Pattern.HYBRID, Pattern.HYBRID_RERANKED, Pattern.STRUCTURED})
 LOW_CONFIDENCE_HEAD = "DRAFT — low confidence, not the final answer."
 PASSED_HEAD = "Evidence check passed — confidence: high"
 
@@ -21,6 +22,8 @@ def retrieve(request: QueryRequest) -> QueryResult:
     if request.pattern not in REAL_PATTERNS:
         payload = run_pattern(request.pattern, request.question, request.caller_id)
         return QueryResult(**payload)
+    if request.pattern is Pattern.STRUCTURED:
+        return run_structured(request)  # own scope check: chapter is accepted here
     mode = request.pattern.value
     caller = get_settings().webui_demo_caller_id
     if request.caller_id is not None and request.caller_id != caller:
@@ -34,12 +37,21 @@ def retrieve(request: QueryRequest) -> QueryResult:
     return run_hybrid(request) if request.pattern is Pattern.HYBRID else semantic_retrieve(request)
 
 
-def wants_generation(request: QueryRequest) -> bool:
-    return request.generate_answer and request.pattern in REAL_PATTERNS
+def _answerable(pattern: str, retrieval: QueryResult) -> bool:
+    """Structured non-ok outcomes (clarification, recommendation, not_found) never produce an answer."""
+    return pattern != Pattern.STRUCTURED.value or retrieval.status == "ok"
+
+
+def wants_generation(request: QueryRequest, retrieval: QueryResult | None = None) -> bool:
+    if not (request.generate_answer and request.pattern in REAL_PATTERNS):
+        return False
+    return retrieval is None or _answerable(request.pattern.value, retrieval)
 
 
 def answer_events(question: str, retrieval: QueryResult):
     """Yield ('text'|'notice', str) events, then ('final', GenerationResult)."""
+    if not _answerable(retrieval.pattern, retrieval):
+        return
     yield from generate_events(question, retrieval.results)
 
 
